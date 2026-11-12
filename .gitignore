@@ -4,9 +4,9 @@ __pycache__/
 .pytest_cache/
 .ruff_cache/
 .env
-data/
-logs/
-reports/
+/data/
+/logs/
+/reports/
 models/*.joblib
 models/metadata.json
 mlruns/
