@@ -1,0 +1,110 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Lint + unit / SIT / UAT tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - run: pip install -r requirements-dev.txt
+      - run: ruff check .
+      - run: mkdir -p reports && pytest -q --junitxml=reports/junit.xml
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: test-results
+          path: reports/junit.xml
+
+  train:
+    name: Train + model quality gate
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - run: pip install -r requirements.txt
+      - run: make data features PY=python
+      # Fails the pipeline (exit 1) if the candidate is worse than the baseline or below the PR-AUC floor.
+      - run: make train PY=python
+      # Informational: the synthetic "new" period contains a fraud-pattern shift (see docs/rca/RCA-001).
+      - run: make drift-batch PY=python
+        continue-on-error: true
+      - uses: actions/upload-artifact@v4
+        with:
+          name: model
+          path: |
+            models/model.joblib
+            models/metadata.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: reports
+          path: reports/
+
+  image:
+    name: Build image + smoke test
+    needs: train
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: model
+          path: models
+      - run: docker build -t fraud-api:${{ github.sha }} .
+      - name: Smoke test the container
+        run: |
+          docker run -d --name api -p 8000:8000 -e API_KEY=ci-key fraud-api:${{ github.sha }}
+          for i in $(seq 1 30); do curl -sf localhost:8000/health && break; sleep 1; done
+          curl -sf -X POST localhost:8000/v1/score \
+            -H "X-API-Key: ci-key" -H "Content-Type: application/json" \
+            -d @tests/fixtures/sample_txn.json
+          test "$(curl -s -o /dev/null -w '%{http_code}' -X POST localhost:8000/v1/score -d '{}')" = "401"
+      - if: always()
+        run: docker logs api || true
+
+  # Template: enable by setting repository variable DEPLOY_ENABLED=true and the AWS secrets/vars below.
+  # The "production" environment should require a manual approval (change-management control).
+  deploy:
+    name: Deploy to AWS App Runner
+    needs: image
+    if: github.ref == 'refs/heads/main' && vars.DEPLOY_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    environment: production
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: model
+          path: models
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+      - id: ecr
+        uses: aws-actions/amazon-ecr-login@v2
+      - name: Build and push (immutable sha tag + "release" tag watched by App Runner)
+        run: |
+          REPO=${{ steps.ecr.outputs.registry }}/fraud-api
+          docker build -t "$REPO:${{ github.sha }}" -t "$REPO:release" .
+          docker push "$REPO:${{ github.sha }}"
+          docker push "$REPO:release"
+      - name: Roll out
+        run: aws apprunner start-deployment --service-arn "${{ vars.APP_RUNNER_SERVICE_ARN }}"

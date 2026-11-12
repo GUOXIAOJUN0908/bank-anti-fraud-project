@@ -1,0 +1,14 @@
+{
+  "trans_num": "T-SMOKE-0001",
+  "trans_date_trans_time": "2026-05-01 14:03:22",
+  "cc_num": "4000123412341234",
+  "merchant": "merchant_grocery_pos_07",
+  "category": "grocery_pos",
+  "amt": 42.5,
+  "lat": 1.3521,
+  "long": 103.8198,
+  "merch_lat": 1.36,
+  "merch_long": 103.83,
+  "city_pop": 5600000,
+  "dob": "1988-07-14"
+}

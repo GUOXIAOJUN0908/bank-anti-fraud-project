@@ -1,0 +1,11 @@
+services:
+  fraud-api:
+    build: .
+    image: fraud-api:local
+    ports:
+      - "8000:8000"
+    environment:
+      API_KEY: ${API_KEY:?Set API_KEY in .env (see .env.example)}
+    volumes:
+      - ./logs:/app/logs
+    restart: unless-stopped

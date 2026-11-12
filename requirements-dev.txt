@@ -1,0 +1,7 @@
+-r requirements.txt
+pytest==8.4.2
+ruff==0.17.4
+# Optional extras (not needed for tests):
+#   locust        load testing (tests/load/locustfile.py)
+#   mlflow        experiment tracking (train.py logs automatically when installed)
+#   xgboost       alternative model (`--model xgboost`; on macOS also `brew install libomp`)
